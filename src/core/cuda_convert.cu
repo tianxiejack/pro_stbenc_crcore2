@@ -143,6 +143,36 @@ __global__ void gpuConvertYUYVtoBGR_kernel(unsigned char *src, unsigned char *ds
 		dst[i*width*3+idx*6+5] = clip(0, 255, y1 + r);//R
 	}
 }
+
+__global__ void gpuConvertUYVYtoBGR_kernel(unsigned char *src, unsigned char *dst,
+		unsigned int width, unsigned int height)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx*2 >= width) {
+		return;
+	}
+
+	for (int i = 0; i < height; ++i) {
+
+		int cb = src[i*width*2+idx*4+0];
+		int y0 = src[i*width*2+idx*4+1];
+		int cr = src[i*width*2+idx*4+2];
+		int y1 = src[i*width*2+idx*4+3];
+
+		int b = DESCALE((cb - 128)*COEFFS_3, 14);
+		int g = DESCALE((cb - 128)*COEFFS_2 + (cr - 128)*COEFFS_1, 14);
+		int r = DESCALE((cr - 128)*COEFFS_0, 14);
+
+		dst[i*width*3+idx*6+0] = clip(0, 255, y0 + b);//B
+		dst[i*width*3+idx*6+1] = clip(0, 255, y0 + g);//G
+		dst[i*width*3+idx*6+2] = clip(0, 255, y0 + r);//R
+
+		dst[i*width*3+idx*6+3] = clip(0, 255, y1 + b);//B
+		dst[i*width*3+idx*6+4] = clip(0, 255, y1 + g);//G
+		dst[i*width*3+idx*6+5] = clip(0, 255, y1 + r);//R
+	}
+}
+
 #else
 __global__ void gpuConvertYUYVtoBGR_kernel(unsigned char *src, unsigned char *dst,
 		unsigned int width, unsigned int height)
@@ -1957,6 +1987,48 @@ static cudaError_t cuConvert_yuv2bgr_yuyv_async(PCUOBJ pObj, Mat src, Mat &dst, 
 	return ret;
 }
 
+
+static cudaError_t cuConvert_yuv2bgr_uyvy_async(PCUOBJ pObj, Mat src, Mat &dst, int flag)
+{
+	cudaError_t ret = cudaSuccess;
+	OSA_assert(dst.data != NULL);
+	int i, width = src.cols, height = src.rows;
+
+	unsigned char *d_src = pObj->d_src;
+	unsigned char *d_dst = (flag == CUT_FLAG_devAlloc) ? dst.data : pObj->d_mem[0];
+
+	unsigned int blockSize = 1024;
+	unsigned int numBlocks = (width / 2 + blockSize - 1) / blockSize;
+	unsigned int nBCs = (src.rows * src.cols * src.channels())/STREAM_CNT;
+	unsigned int nBCd = (dst.rows * dst.cols * dst.channels())/STREAM_CNT;
+
+	for(i = 0; i<STREAM_CNT; i++){
+		ret = cudaMemcpyAsync(d_src + nBCs*i,
+				src.data + nBCs*i, nBCs, cudaMemcpyHostToDevice, pObj->streams[i]);
+	}
+	for(i = 0; i<STREAM_CNT; i++){
+		gpuConvertUYVYtoBGR_kernel<<<numBlocks, blockSize, 0, pObj->streams[i]>>>(
+				d_src + nBCs*i, d_dst + nBCd*i,
+				width, height/STREAM_CNT);
+	}
+	if(dst.data != d_dst)
+	{
+		for(i = 0; i<STREAM_CNT; i++){
+			ret = cudaMemcpyAsync(dst.data + nBCd*i,
+					d_dst + nBCd*i, nBCd, cudaMemcpyDeviceToHost, pObj->streams[i]);
+		}
+	}
+	for(i = 0; i<STREAM_CNT; i++){
+		ret = cudaStreamSynchronize(pObj->streams[i]);
+	}
+
+	//printf(" dst.data = %p d_dst = %p\n", dst.data, d_dst);
+
+	return ret;
+}
+
+
+
 static cudaError_t cunppConvert_yuv2bgr_yuyv_async(PCUOBJ pObj, const Mat& src, Mat &dst, int flag)
 {
 	cudaError_t ret = cudaSuccess;
@@ -2003,6 +2075,23 @@ cudaError_t cuConvert_yuv2bgr_yuyv_async(int chId, Mat src, Mat &dst, int flag)
 	return ret;
 }
 
+cudaError_t cuConvert_yuv2bgr_uyvy_async(int chId, Mat src, Mat &dst, int flag)
+{
+	LOCK;
+	cudaError_t ret = cudaSuccess;
+	gObjs[chId].stampBegin = getTickCount();
+	ret = cuConvert_yuv2bgr_uyvy_async(&gObjs[chId], src, dst, flag);
+	if(ret != cudaSuccess){
+		printf("%s(%i)  : cudaGetLastError() CUDA error: %d\n", __FILE__, __LINE__, (int)cudaGetLastError());
+	}
+	//ret = cudaDeviceSynchronize();
+	checkCudaErrors(cudaGetLastError());
+	gObjs[chId].stampEnd = getTickCount();
+	elapsedTimeCals(chId, __func__);
+	UNLOCK;
+	return ret;
+}
+
 cudaError_t cuConvertEnh_yuv2bgr_yuyv_async(int chId, Mat src, Mat &dst, int flag)
 {
 	LOCK;
@@ -2010,6 +2099,27 @@ cudaError_t cuConvertEnh_yuv2bgr_yuyv_async(int chId, Mat src, Mat &dst, int fla
 	gObjs[chId].stampBegin = getTickCount();
 	Mat enhSrc(src.rows, src.cols,CV_8UC3, gObjs[chId].d_mem[0]);
 	ret = cuConvert_yuv2bgr_yuyv_async(&gObjs[chId], src, enhSrc, CUT_FLAG_devAlloc);
+	if(ret != cudaSuccess){
+		printf("%s(%i)  : cudaGetLastError() CUDA error: %d\n", __FILE__, __LINE__, (int)cudaGetLastError());
+	}
+	//ret = cudaMemcpy(dst.data,enhSrc.data, src.rows*src.cols*dst.channels(),cudaMemcpyDeviceToDevice);
+	cuClahe(enhSrc, dst, (src.cols==1920)?8:8, (src.cols==1920)?4:8, 3.0f);
+	//cuTemporalFilter(dst, dst);
+	//ret = cudaDeviceSynchronize();
+	checkCudaErrors(cudaGetLastError());
+	gObjs[chId].stampEnd = getTickCount();
+	elapsedTimeCals(chId, __func__);
+	UNLOCK;
+	return ret;
+}
+
+cudaError_t cuConvertEnh_yuv2bgr_uyvy_async(int chId, Mat src, Mat &dst, int flag)
+{
+	LOCK;
+	cudaError_t ret = cudaSuccess;
+	gObjs[chId].stampBegin = getTickCount();
+	Mat enhSrc(src.rows, src.cols,CV_8UC3, gObjs[chId].d_mem[0]);
+	ret = cuConvert_yuv2bgr_uyvy_async(&gObjs[chId], src, enhSrc, CUT_FLAG_devAlloc);
 	if(ret != cudaSuccess){
 		printf("%s(%i)  : cudaGetLastError() CUDA error: %d\n", __FILE__, __LINE__, (int)cudaGetLastError());
 	}

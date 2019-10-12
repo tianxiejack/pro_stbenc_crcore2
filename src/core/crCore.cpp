@@ -801,7 +801,7 @@ public:
 			//OSA_printf("%s %d: %d x %d c%d", __func__, __LINE__, bufInfo->width, bufInfo->height, bufInfo->channels);
 		}else{
 			//if(chId != 1)
-			OSA_printf("%s %d: InputQueue %s ch%d over flow", __FILE__, __LINE__, __func__, chId);
+			//OSA_printf("%s %d: InputQueue %s ch%d over flow", __FILE__, __LINE__, __func__, chId);
 		}
 
 		return ret;
@@ -1222,6 +1222,16 @@ static void renderFrame(int chId, const Mat& img, const struct v4l2_buffer& bufI
 					}
 					info->format = V4L2_PIX_FMT_BGR24;
 				}
+				else if(format==V4L2_PIX_FMT_UYVY){
+					
+					frame = Mat(img.rows,img.cols,CV_8UC3, info->physAddr);
+					if(enableEnhFlag[chId])
+						cuConvertEnh_yuv2bgr_uyvy_async(chId, img, frame, CUT_FLAG_devAlloc);
+					else{
+						cuConvert_yuv2bgr_uyvy_async(chId, img, frame, CUT_FLAG_devAlloc);
+					}
+					info->format = V4L2_PIX_FMT_BGR24;
+				}
 				else if(format==V4L2_PIX_FMT_BGR24){
 					frame = Mat(img.rows,img.cols,CV_8UC3, info->physAddr);
 					cudaMemcpy(info->physAddr, img.data, frame.rows*frame.cols*frame.channels(), cudaMemcpyHostToDevice);
@@ -1316,7 +1326,7 @@ static void processFrameAtOnce(int cap_chid, unsigned char *src, const struct v4
 
 	if(curChannelFlag == cap_chid /*|| curSubChannelIdFlag == cap_chid*/ || bindBlendFlag[cap_chid] != 0){
 		Mat img;
-		if(format==V4L2_PIX_FMT_YUYV)
+		if(format==V4L2_PIX_FMT_YUYV || format==V4L2_PIX_FMT_UYVY)
 		{
 			img	= Mat(channelsImgSize[cap_chid].height,channelsImgSize[cap_chid].width,CV_8UC2, src);
 		}
@@ -1326,7 +1336,8 @@ static void processFrameAtOnce(int cap_chid, unsigned char *src, const struct v4
 		}
 		else if(format==V4L2_PIX_FMT_BGR24){
 			img = Mat(channelsImgSize[cap_chid].height,channelsImgSize[cap_chid].width,CV_8UC3,src);
-		}else{
+		}
+		else{
 			OSA_assert(0);
 		}
 		proc->process(cap_chid, curFovIdFlag[cap_chid], ezoomxFlag[cap_chid], img, Mat(), tm);
@@ -1349,7 +1360,7 @@ static void processFrame(int cap_chid, unsigned char *src, const struct v4l2_buf
 	//	return;
 	//struct timespec ns0;
 	//clock_gettime(CLOCK_MONOTONIC_RAW, &ns0);
-	if(format==V4L2_PIX_FMT_YUYV)
+	if(format==V4L2_PIX_FMT_YUYV || format==V4L2_PIX_FMT_UYVY)
 	{
 		//OSA_printf("%s ch%d %d", __func__, cap_chid, OSA_getCurTimeInMsec());
 		//OSA_printf("%s: %d ch%d %p", __func__, __LINE__, cap_chid, src);
