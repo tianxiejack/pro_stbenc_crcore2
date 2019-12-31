@@ -73,6 +73,7 @@ static bool enableMMTDFlag = false;
 static bool enableIntellFlag = false;
 static bool enableMotionDetectFlag = false;
 static bool enableEnhFlag[CORE_CHN_MAX];
+static bool enableStabSideBySideFlag[CORE_CHN_MAX];
 static bool enableStabFlag[CORE_CHN_MAX];
 static CORE_STAB_PARAM stabParams[CORE_CHN_MAX];
 static unsigned int nSabCount[CORE_CHN_MAX];
@@ -145,6 +146,7 @@ static int defaultEncParamTab1[CORE_CHN_MAX*3][8] = {
 //static int *userEncParamTab[3] = {NULL, NULL, NULL};
 static int *userEncParamTab0[CORE_CHN_MAX][3];
 static int *userEncParamTab1[CORE_CHN_MAX][3];
+static unsigned char *gDeviceMem = NULL;
 
 static __inline__ int* getEncParamTab(int chId, int level)
 {
@@ -220,6 +222,7 @@ static void localInit(int nChannels, bool bEncoder)
 	enableMMTDFlag = false;
 	renderHook = NULL;
 	memset(nSabCount, 0, sizeof(nSabCount));
+	memset(enableStabSideBySideFlag, 0, sizeof(enableStabSideBySideFlag));
 	memset(enableEnhFlag, 0, sizeof(enableEnhFlag));
 	memset(enableStabFlag, 0, sizeof(enableStabFlag));
 	memset(bindBlendFlag, 0, sizeof(bindBlendFlag));
@@ -437,6 +440,25 @@ static int enableEnh(int chId, bool enable)
 	enableEnhFlag[chId] = enable;
 	return OSA_SOK;
 }
+
+
+static int enableSideBySide(bool enable)
+{
+	enableStabSideBySideFlag[curChannelFlag] = enable;
+	nSabCount[curChannelFlag] = 0;
+	return OSA_SOK;
+}
+
+
+static int enableSideBySide(int chId, bool enable)
+{
+	if(chId<0 || chId >=CORE_CHN_MAX)
+		return OSA_EFAIL;
+	enableStabSideBySideFlag[chId] = enable;
+	nSabCount[chId] = 0;
+	return OSA_SOK;
+}
+
 
 static int enableStab(bool enable, const CORE_STAB_PARAM& params)
 {
@@ -1054,7 +1076,16 @@ static int init(CORE1001_INIT_PARAM *initParam, OSA_SemHndl *notify = NULL, CGlu
 	general->creat();
 	general->init();
 	general->run();
-
+	
+	if(gDeviceMem != NULL){
+		cudaFree(gDeviceMem);
+		gDeviceMem = NULL;
+	}
+	if(gDeviceMem == NULL){
+		ret = cudaMalloc((void**)&gDeviceMem, 1920*1080*3);
+		assert(ret == OSA_SOK);
+	}
+	
 	return ret;
 }
 
@@ -1104,6 +1135,12 @@ static int uninit()
 	}
 	if(inputQ != NULL)
 		delete inputQ;
+
+	if(gDeviceMem != NULL){
+		cudaFree(gDeviceMem);
+		gDeviceMem = NULL;
+	}
+
 }
 #define ZeroCpy	(0)
 static void encTranFrame(int chId, const Mat& img, const struct v4l2_buffer& bufInfo, bool bEnc)
@@ -1254,7 +1291,16 @@ static void renderFrame(int chId, const Mat& img, const struct v4l2_buffer& bufI
 				if(enableStabFlag[chId]){
 					cvGpuMat inFrame = cvGpuMat(frame.rows, frame.cols, frame.type(), (void*)frame.data, frame.step.buf[0]);
 					cvGpuMat outFrame = cvGpuMat(frame.rows, frame.cols, frame.type(), (void*)frame.data, frame.step.buf[0]);
-				    //cv::Mat mask = cv::Mat(frame.rows, frame.cols, CV_8UC1);
+					cvGpuMat midFrame = cvGpuMat(frame.rows, frame.cols>>1, frame.type(), (void*)gDeviceMem, frame.step.buf[0]>>1);
+
+					if(enableStabSideBySideFlag[chId])
+					{
+						cudaMemcpy2D(midFrame.data, midFrame.step, inFrame.data+(inFrame.cols>>1)*inFrame.channels(), inFrame.step,
+								midFrame.cols*midFrame.channels(), midFrame.rows, cudaMemcpyDeviceToDevice);
+					}
+
+
+					//cv::Mat mask = cv::Mat(frame.rows, frame.cols, CV_8UC1);
 				    //mask.setTo(0);
 				    //cv::Rect rec = cv::Rect(50, 100, frame.cols-100, frame.rows-220);
 				    //mask(rec).setTo(255);
@@ -1275,8 +1321,22 @@ static void renderFrame(int chId, const Mat& img, const struct v4l2_buffer& bufI
 						motionCompensator[chId]->process(inFrame);
 					}
 					cvGpuMat stabFrame = motionCompensator[chId]->getOut();
-					cudaMemcpy2D(outFrame.data, outFrame.step, stabFrame.data, stabFrame.step,
-							outFrame.cols*outFrame.channels(), outFrame.rows, cudaMemcpyHostToDevice);
+
+					if(enableStabSideBySideFlag[chId])
+					{
+						cudaMemcpy2D(outFrame.data, outFrame.step, stabFrame.data, stabFrame.step,
+							(outFrame.cols>>1)*outFrame.channels(), outFrame.rows, cudaMemcpyDeviceToDevice);
+						cudaMemcpy2D(outFrame.data+(outFrame.cols>>1)*outFrame.channels(), outFrame.step, midFrame.data, midFrame.step,
+							(outFrame.cols>>1)*outFrame.channels(), outFrame.rows, cudaMemcpyDeviceToDevice);
+					}
+					else
+					{
+						cudaMemcpy2D(outFrame.data, outFrame.step, stabFrame.data, stabFrame.step,
+								outFrame.cols*outFrame.channels(), outFrame.rows, cudaMemcpyDeviceToDevice);
+					}
+
+
+					
 					//cudaDeviceSynchronize();
 					//motionCompensator[chId]->printPerfs();
 					nSabCount[chId] ++;
@@ -1731,6 +1791,21 @@ public:
 		UPDATE();
 		return ret;
 	}
+
+	virtual int enableSideBySide(bool enable)
+	{
+		int ret = cr_local::enableSideBySide(enable);
+		UPDATE();
+		return ret;	
+	}
+	
+	virtual int enableSideBySide(int chId, bool enable)
+	{
+		int ret = cr_local::enableSideBySide(chId, enable);
+		UPDATE();
+		return ret;	
+	}
+
 	virtual int enableStab(bool enable, const CORE_STAB_PARAM& params)
 	{
 		int ret = cr_local::enableStab(enable, params);

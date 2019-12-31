@@ -221,6 +221,10 @@ public:
 	virtual int setHideSysOsd(bool bHideOSD) = 0;
 	virtual int setHideSysOsd(unsigned int mask = 0) = 0;//bit0: gdb; bit1: trk; bit2: mmtd; bit3: montion; bit4: bkgd; bit5: blob; bit6: svm; bit7: scene; bit8: intell;
 
+	virtual int enableSideBySide(bool enable) = 0;
+	virtual int enableSideBySide(int chId, bool enable) = 0;
+
+
 	CORE1001_STATS m_stats;
 	cv::Mat m_dc[CORE_CHN_MAX];
 };
