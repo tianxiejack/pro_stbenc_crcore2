@@ -72,7 +72,7 @@ cudaError_t cuConvertEnh_async(int chId, cv::Mat src, cv::Mat osd, cv::Mat &dst,
 cudaError_t cuConvert_async(int chId, cv::Mat src, cv::Mat &dst, int zoomx);
 cudaError_t cuConvertEnh_async(int chId, cv::Mat src, cv::Mat &dst, int zoomx);
 cudaError_t cuConvert_yuv2bgr_yuyv_async(int chId, cv::Mat src, cv::Mat &dst, int flag);
-cudaError_t cuConvertEnh_yuv2bgr_yuyv_async(int chId, cv::Mat src, cv::Mat &dst, int flag);
+cudaError_t cuConvertEnh_yuv2bgr_yuyv_async(int chId, cv::Mat src, cv::Mat &dst, int flag,int alg);
 cudaError_t cuConvertEnh_gray(int chId, cv::Mat src, cv::Mat &dst, int flag);
 cudaError_t cuConvertConn_yuv2bgr_i420(int chId, cv::Mat &dst, int flag);
 

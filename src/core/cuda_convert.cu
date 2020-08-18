@@ -2092,7 +2092,7 @@ cudaError_t cuConvert_yuv2bgr_uyvy_async(int chId, Mat src, Mat &dst, int flag)
 	return ret;
 }
 
-cudaError_t cuConvertEnh_yuv2bgr_yuyv_async(int chId, Mat src, Mat &dst, int flag)
+cudaError_t cuConvertEnh_yuv2bgr_yuyv_async(int chId, Mat src, Mat &dst, int flag,int alg)
 {
 	LOCK;
 	cudaError_t ret = cudaSuccess;
@@ -2103,7 +2103,29 @@ cudaError_t cuConvertEnh_yuv2bgr_yuyv_async(int chId, Mat src, Mat &dst, int fla
 		printf("%s(%i)  : cudaGetLastError() CUDA error: %d\n", __FILE__, __LINE__, (int)cudaGetLastError());
 	}
 	//ret = cudaMemcpy(dst.data,enhSrc.data, src.rows*src.cols*dst.channels(),cudaMemcpyDeviceToDevice);
-	cuClahe(enhSrc, dst, (src.cols==1920)?8:8, (src.cols==1920)?4:8, 3.0f);
+	switch(alg)
+	{
+		case 0:	//hist
+			cuHistEnh(enhSrc, dst);
+			break;
+
+		case 1:	//gamma
+			cuClahe(enhSrc, dst, (src.cols==1920)?8:4, (src.cols==1920)?8:4, 4.0f);
+			break;
+
+		case 2:	//unhazed
+			cuUnhazed(enhSrc, dst);
+			break;
+
+		case 3:	//clahe
+			cuClahe(enhSrc, dst, (src.cols==1920)?8:8, (src.cols==1920)?4:8, 3.0f);
+			break;
+
+		default:
+			cuClahe(enhSrc, dst, (src.cols==1920)?8:8, (src.cols==1920)?4:8, 3.0f);
+			break;
+	}
+//	cuClahe(enhSrc, dst, (src.cols==1920)?8:8, (src.cols==1920)?4:8, 3.0f);
 	//cuTemporalFilter(dst, dst);
 	//ret = cudaDeviceSynchronize();
 	checkCudaErrors(cudaGetLastError());

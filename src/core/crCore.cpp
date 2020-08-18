@@ -67,6 +67,7 @@ static std::unique_ptr<MotionComp> motionCompensator[CORE_CHN_MAX];
 static int curChannelFlag = 0;
 static int curSubChannelIdFlag = -1;
 static int curFovIdFlag[CORE_CHN_MAX];
+static int enableEnhAlg;
 static bool curFixSizeFlag = false;
 static bool enableTrackFlag = false;
 static bool enableMMTDFlag = false;
@@ -435,9 +436,10 @@ static int enableEnh(bool enable)
 
 static int enableEnh(int chId, bool enable)
 {
-	if(chId<0 || chId >=CORE_CHN_MAX)
-		return OSA_EFAIL;
-	enableEnhFlag[chId] = enable;
+//	if(chId<0 || chId >=CORE_CHN_MAX)
+//		return OSA_EFAIL;
+	enableEnhFlag[curChannelFlag] = enable;
+	enableEnhAlg = chId;
 	return OSA_SOK;
 }
 
@@ -1253,7 +1255,7 @@ static void renderFrame(int chId, const Mat& img, const struct v4l2_buffer& bufI
 				if(format==V4L2_PIX_FMT_YUYV){
 					frame = Mat(img.rows,img.cols,CV_8UC3, info->physAddr);
 					if(enableEnhFlag[chId])
-						cuConvertEnh_yuv2bgr_yuyv_async(chId, img, frame, CUT_FLAG_devAlloc);
+						cuConvertEnh_yuv2bgr_yuyv_async(chId, img, frame, CUT_FLAG_devAlloc,enableEnhAlg);
 					else{
 						cuConvert_yuv2bgr_yuyv_async(chId, img, frame, CUT_FLAG_devAlloc);
 					}
